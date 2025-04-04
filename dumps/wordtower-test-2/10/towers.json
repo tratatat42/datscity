@@ -1,0 +1,4 @@
+{
+  "errCode": 23,
+  "error": "there is no active game, check game URL (test: games-test.datsteam.dev  prod: games.datsteam.dev), current time: 2025-04-04T17:55:00Z ,next rounds: [wordtower-test-3 2025-04-04T18:00:00Z -- 2025-04-04T18:55:00Z] "
+}
