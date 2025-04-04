@@ -11,6 +11,11 @@ all: $(TARGET)
 $(TARGET): src/main.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
+build: $(TARGET)
+
+run: build
+	./$(TARGET)
+
 clean:
 	rm -f $(TARGET) $(OBJS)
 
