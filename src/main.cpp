@@ -48,14 +48,16 @@ mt19937_64 rngll(steady_clock::now().time_since_epoch().count() * (random_addres
 const string SERVER_HOST = "https://games-test.datsteam.dev";
 Client client(SERVER_HOST);
 
-string read_auth_token() {
-    ifstream fin("auth_token.txt");
-    if (!fin.is_open()) {
-        cerr << "auth_token.txt not found" << endl;
-        exit(1);
+string read_auth_token(const string& file_path = "auth_token.txt") {
+    ifstream fin(file_path);
+    if (!fin) {
+        throw runtime_error("Failed to open " + file_path);
     }
     string token;
     fin >> token;
+    if (token.empty()) {
+        throw runtime_error("Token is empty in " + file_path);
+    }
     return token;
 }
 
