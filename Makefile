@@ -18,7 +18,7 @@ run: build
 	./$(TARGET)
 
 test-1: build
-	./$(TARGET) --round wordtower-test-1 --turn 5
+	./$(TARGET) --round wordtower-test-5 --turn 3
 
 clean:
 	rm -f $(TARGET) $(OBJS)

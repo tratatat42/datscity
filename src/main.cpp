@@ -127,10 +127,10 @@ string wait_next_round() {
             round_name = round["name"];
         }
     }
-    // if (found) {
-    //     cerr << "Waiting for next round: " << nearest_start << nl;
-    //     sleep_wait(nearest_start);
-    // }
+    if (found) {
+        cerr << "Waiting for next round: " << nearest_start << nl;
+        sleep_wait(nearest_start);
+    }
     return round_name;
 }
 
@@ -151,13 +151,13 @@ o-----> RIGHT(x)
 */
 
 enum Direction {
-    DOWN = 0,
+    UP = 0,
     RIGHT = 1,
     FRONT = 2,
 };
 
 bool same_type(const Direction& a, const Direction& b) {
-    return (a == DOWN) == (b == DOWN);
+    return (a == UP) == (b == UP);
 }
 
 struct Dir {
@@ -170,6 +170,10 @@ struct Dir {
 
 ostream& operator<<(ostream& os, const Dir& d) {
     return os << "<" << d.dx << ";" << d.dy << ";" << d.dz << ">";
+}
+
+bool operator==(const Dir& a, const Dir& b) {
+    return a.dx == b.dx && a.dy == b.dy && a.dz == b.dz;
 }
 
 Dir operator*(const Dir& d, int k) {
@@ -205,7 +209,7 @@ Pos operator+(const Pos& p, const Dir& d) {
 }
 
 const vector<Dir> DIRECTIONS = {
-    {0, 0, 1},  // DOWN
+    {0, 0, -1},  // UP
     {1, 0, 0},  // RIGHT
     {0, 1, 0},  // FRONT
 };
@@ -214,7 +218,7 @@ const vector<Dir> D6 = {
     {0, 0, 1},  // UP
     {1, 0, 0},  // RIGHT
     {0, 1, 0},  // FRONT
-    {0, 0, -1}, // DOWN
+    {0, 0, -1}, // UP
     {-1, 0, 0}, // LEFT
     {0, -1, 0}, // BACK
 };
@@ -224,7 +228,19 @@ struct Word {
     Direction dir;
     Pos pos;
     int len;
+
+    Pos start_position() const {
+        return pos;
+    }
+
+    Pos end_position() const {
+        return pos + DIRECTIONS[dir] * (len - 1);
+    }
 };
+
+ostream& operator<<(ostream& os, const Word& w) {
+    return os << "Word(" << w.id << ", " << w.dir << ", " << w.pos << ", " << w.len << ")";
+}
 
 typedef vector<int> iword;
 
@@ -235,7 +251,6 @@ struct Tower {
     vector<Word> words;
     set<int> used_words;
     vec3d(int) dir_grid;
-    vec3d(int) word_grid;
     vec3d(int) grid;
     vec1d(int) n_words;
     int total_len;
@@ -243,7 +258,6 @@ struct Tower {
     Tower() { }
 
     Tower(int nx, int ny, int nz) : nx(nx), ny(ny), nz(nz) {
-        word_grid = ivec3d(int, nx, ny, nz, UNDEF);
         dir_grid = ivec3d(int, nx, ny, nz, 0);
         grid = ivec3d(int, nx, ny, nz, 0);
         n_words = ivec1d(int, nz, 0);
@@ -255,7 +269,7 @@ struct Tower {
     }
 
     bool can(int id, const iword& word, Direction dir, Pos pos, bool check_full_intersection = false) {
-        if (used_words.count(id)) {
+        if (id != UNDEF && used_words.count(id)) {
             return false;
         }
         int len = word.size();
@@ -263,11 +277,11 @@ struct Tower {
         if (!inside(pos + vec * (len - 1))) {
             return false;
         }
+        if (!inside(pos)) {
+            return false;
+        }
         for (int i = 0; i < len; ++i) {
             Pos p = pos + vec * i;
-            if (!inside(p)) {
-                return false;
-            }
             if (grid[p.x][p.y][p.z] && grid[p.x][p.y][p.z] != word[i]) {
                 return false;
             }
@@ -277,9 +291,12 @@ struct Tower {
             if (check_full_intersection && dir_grid[p.x][p.y][p.z] + (1 << dir) == 7) {
                 return false;
             }
-            if (word_grid[p.x][p.y][p.z] == UNDEF) {
+            if (!grid[p.x][p.y][p.z] && id != UNDEF) {
                 for (auto& d : D6) {
-                    if (d.is_simple_parallel(vec)) {
+                    if (i + 1 < len && d == vec) {
+                        continue;
+                    }
+                    if (i > 0 && d == -vec) {
                         continue;
                     }
                     Pos e = p + d;
@@ -297,30 +314,26 @@ struct Tower {
 
     void add(int id, const iword& word, Direction dir, Pos pos) {
         used_words.insert(id);
-        int index = words.size();
         words.push_back({id, dir, pos, sz(word)});
         int len = word.size();
         for (int i = 0; i < len; ++i) {
             Pos p = pos + DIRECTIONS[dir] * i;
             grid[p.x][p.y][p.z] = word[i];
-            word_grid[p.x][p.y][p.z] = index;
             dir_grid[p.x][p.y][p.z] |= 1 << dir;
         }
         total_len += len;
 
-        if (dir != DOWN) {
+        if (dir != UP) {
             n_words[pos.z]++;
         }
     }
 
     Pos start_position() const {
-        return words.back().pos;
+        return words.back().start_position();
     }
 
-    Pos last_position() const {
-        auto word = words.back();
-        auto vec = DIRECTIONS[word.dir];
-        return word.pos + vec * (word.len - 1);
+    Pos end_position() const {
+        return words.back().end_position();
     }
 
     double score() {
@@ -392,6 +405,7 @@ enum Stage {
     CORNER1_STAGE,
     CORNER2_STAGE,
     DOWN_STAGE,
+    RANDOM_STAGE,
 };
 
 struct State {
@@ -453,7 +467,23 @@ int main(int argc, char** argv) {
             towers_out.close();
         }
     };
-    
+
+    auto dump_build = [&](const json& words, const json& build) {
+        auto turn_folder = round_folder / to_string(words["turn"]);
+        if (!exists(turn_folder)) {
+            create_directories(turn_folder);
+        }
+        {
+            auto build_file = turn_folder / "build.json";
+            dbg(build_file);
+            ofstream build_out(build_file);
+            build_out << build.dump(2);
+            build_out.close();
+            dbg("ok");
+            return true;
+        }
+    };
+
     auto load_dump = [&](auto& words, auto& towers) {
         auto turn_folder = round_folder / round_turn;
         auto word_file = turn_folder / "words.json";
@@ -475,11 +505,13 @@ int main(int argc, char** argv) {
         } else {
             auto words_response = client.Get("/api/words");
             words_data = json::parse(words_response->body);
-            auto towers_response = client.Get("/api/towers_data");
+            auto towers_response = client.Get("/api/towers");
+            dbg(towers_response->body);
             towers_data = json::parse(towers_response->body);
             int next_turn_sec = words_data["nextTurnSec"];
             if (next_turn_sec < 10) {
                 cerr << "Next turn in " << next_turn_sec << " seconds" << nl;
+                sleep_wait(system_clock::now() + seconds(next_turn_sec + 1));
                 continue;
             }
             dump_turn(words_data, towers_data); 
@@ -498,10 +530,33 @@ int main(int argc, char** argv) {
             words.push_back(word);
         }
 
+        auto tower_data = towers_data["tower"];
+        auto tower_words = tower_data["words"];
+        dbg(sz(tower_words));
+        for (auto& tower_word : tower_words) {
+            auto word_utf = wstring_convert<codecvt_utf8<wchar_t>>().from_bytes(tower_word["text"]);
+            auto word = vector<int>(word_utf.begin(), word_utf.end());
+            auto word_id = UNDEF;
+            Direction dir = (Direction)((int)tower_word["dir"] - 1);
+            Pos pos = {tower_word["pos"][0], tower_word["pos"][1], tower_word["pos"][2]};
+            assert(tower.can(word_id, word, dir, pos));
+            tower.add(word_id, word, dir, pos);
+        }
+
+        for (int id : words_data["usedIndexes"]) {
+            tower.used_words.insert(id);
+        }
+
         map<pair<int, int>, vector<int>> words_library;
         map<int, int> char_offset;
         for (int i = 0; i < words.size(); ++i) {
+            if (tower.used_words.count(i)) {
+                continue;
+            }
             auto& word = words[i];
+            if (sz(word) <= 2) {  // FIXME
+                continue;
+            }
             int len = word.size();
             for (int j = 0; j < word.size(); ++j) {
                 auto& c = word[j];
@@ -514,31 +569,68 @@ int main(int argc, char** argv) {
         vector<StatePtr> states;
 
         const int LIMIT = 10;
-        for (int i = 0; i < LIMIT; ++i) {
-            auto id = rng() % words.size();
-            auto word = words[id];
-            Direction dir = (Direction)(rng() % 2 + 1);
+        if (sz(tower.words) == 0) {
+            for (int i = 0; i < LIMIT; ++i) {
+                auto id = rng() % words.size();
+                if (tower.used_words.count(id)) {
+                    continue;
+                }
+                auto word = words[id];
+                auto dir = (Direction)(rng() % 2 + 1);
+                StatePtr state = make_shared<State>();
+                state->tower = tower;
+                state->tower.add(id, word, dir, Pos{0, 0, 0});
+                state->stage = UP_STAGE;
+                states.push_back(state);
+            }
+        } else {
             StatePtr state = make_shared<State>();
             state->tower = tower;
-            state->tower.add(id, word, dir, Pos{0, 0, 0});
             state->stage = UP_STAGE;
             states.push_back(state);
         }
 
-        Tower target_tower;
+        Tower target_tower = tower;
         bool found = false;
         int n_broken = 0;
         while (sz(states) && !found) {
             vector<WeightedMove> cands;
-
             dbg(sz(states));
             for (auto& state : states) {
                 auto& tower = state->tower;
-                auto& word = tower.words.back();
                 auto& stage = state->stage;
+                Word word;
+                if (stage == RANDOM_STAGE) {
+                    vector<int> indices;
+                    int opt = -1;
+                    for (int i = 0; i < tower.words.size(); ++i) {
+                        auto word = tower.words[i];
+                        if (word.dir != UP) {
+                            continue;
+                        }
+                        Pos pos = word.end_position();
+                        if (tower.dir_grid[pos.x][pos.y][pos.z] == 7) {
+                            continue;
+                        }
+                        if (opt < pos.z) {
+                            indices.clear();
+                            opt = pos.z;
+                        }
+                        if (pos.z == opt) {
+                            indices.push_back(i);
+                        }
+                    }
+                    if (indices.empty()) {
+                        continue;
+                    }
+                    int index = indices[rng() % indices.size()];
+                    word = tower.words[index];
+                } else {
+                    word = tower.words.back();
+                }
 
                 bool found = false;
-                for (auto dir : {DOWN, RIGHT, FRONT} ) {
+                for (auto dir : {UP, RIGHT, FRONT} ) {
                     if (same_type(word.dir, dir)) {
                         continue;
                     }
@@ -561,15 +653,17 @@ int main(int argc, char** argv) {
                                 if (tower.can(id, words[id], dir, start, true)) {
                                     int len = words[id].size();
                                     auto end = start + DIRECTIONS[dir] * (len - 1);
+                                    int min_z = min(start.z, end.z);
+                                    int max_z = max(start.z, end.z);
                                     vector<int> res;
                                     if (stage == UP_STAGE) {
-                                        res = {end.z, -sz(words[id]), -start.z_main_diag()};
+                                        res = {max_z, -sz(words[id]), -start.z_main_diag()};
                                     } else if (stage == CORNER1_STAGE) {
-                                        res = {start.z, -end.z_second_diag(), -sz(words[id])};
+                                        res = {min_z, -end.z_second_diag(), -sz(words[id])};
                                     } else if (stage == CORNER2_STAGE) {
-                                        res = {start.z, end.z_main_diag(), -sz(words[id])};
+                                        res = {min_z, end.z_main_diag(), -sz(words[id])};
                                     } else if (stage == DOWN_STAGE) {
-                                        res = {-start.z, -sz(words[id]), start.z_main_diag()};
+                                        res = {-min_z, -sz(words[id]), start.z_main_diag()};
                                     }
                                     cands.emplace_back(state, res, Word{id, dir, start, len});
                                     found = true;
@@ -597,18 +691,22 @@ int main(int argc, char** argv) {
                 }
                 seen_words.insert(cand.word.id);
 
-                dbg(cand.word.id, cand.word.dir, cand.word.pos, cand.word.len);
                 tower.add(cand.word.id, words[cand.word.id], cand.word.dir, cand.word.pos);
                 target_tower = tower;
 
-                Pos pos = tower.last_position();
-                if (stage == UP_STAGE && pos.z == tower.nz - 1) {
+                Pos start_pos = cand.word.start_position();
+                Pos end_pos = cand.word.end_position();
+                int min_z = min(start_pos.z, end_pos.z);
+                int max_z = max(start_pos.z, end_pos.z);
+                int max_x = max(start_pos.x, end_pos.x);
+                int max_y = max(start_pos.y, end_pos.y);
+                if (stage == UP_STAGE && max_z == tower.nz - 1) {
                     stage = CORNER1_STAGE;
-                } else if (stage == CORNER1_STAGE && pos.y == tower.ny - 1) {
+                } else if (stage == CORNER1_STAGE && max_y == tower.ny - 1) {
                     stage = CORNER2_STAGE;
-                } else if (stage == CORNER2_STAGE && pos.x == tower.nx - 1) {
+                } else if (stage == CORNER2_STAGE && max_x == tower.nx - 1) {
                     stage = DOWN_STAGE;
-                } else if (stage == DOWN_STAGE && pos.z == 0 && tower.words.back().dir != DOWN) {
+                } else if (stage == DOWN_STAGE && min_z == 0 && tower.words.back().dir != UP) {
                     target_tower = tower;
                     found = true;
                 }
@@ -627,51 +725,34 @@ int main(int argc, char** argv) {
         {
             target_tower.print("debug/target.scad");
         }
-
-        {
-            auto debug_words = json::array();
-            for (auto& word : target_tower.words) {
-                auto debug_word = json::object();
-                debug_word["id"] = word.id;
-                debug_word["dir"] = word.dir + 1;
-                debug_word["len"] = word.len;
-                debug_word["pos"] = json::array();
-                debug_word["pos"].push_back(word.pos.x);
-                debug_word["pos"].push_back(word.pos.y);
-                debug_word["pos"].push_back(-word.pos.z);
-                debug_words.push_back(debug_word);
-            }
-            auto debug_tower = json::object();
-            debug_tower["words"] = debug_words;
-            debug_tower["mapSize"] = words_data["mapSize"];
-            string debug_folder = "debug";
-            string debug_file = debug_folder + "/target.json";
-            ofstream fout(debug_file);
-            fout << debug_tower.dump(2);
-            fout.close();
-        }
+        dbg("Score", target_tower.score());
 
         auto build_words = json::array();
-        for (auto& word : tower.words) {
+        for (auto& word : target_tower.words) {
+            if (word.id == UNDEF) {
+                continue;
+            }
             auto build_word = json::object();
             build_word["id"] = word.id;
             build_word["dir"] = word.dir + 1;
             build_word["pos"] = json::array();
             build_word["pos"].push_back(word.pos.x);
             build_word["pos"].push_back(word.pos.y);
-            build_word["pos"].push_back(-word.pos.z);
+            build_word["pos"].push_back(word.pos.z);
             build_words.push_back(build_word);
         }
         auto build = json::object();
-        build["done"] = false;
+        build["done"] = true;
         build["words"] = build_words;
 
         if (use_dump) {
             break;
         }
 
-        auto build_response = client.Post("/api/build", build.dump(), "application/json");
-        dbg(build_response->body);
+        if (dump_build(words_data, build)) {
+            auto build_response = client.Post("/api/build", build.dump(), "application/json");
+            dbg(build_response->body);
+        }
         sleep_wait(next_turn_time);
     }
     return 0;
