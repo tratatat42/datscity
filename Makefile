@@ -17,7 +17,7 @@ build: $(TARGET)
 run: build
 	./$(TARGET)
 
-test-1: build
+test: build
 	./$(TARGET) --round wordtower-test-1 --turn 5
 
 clean:
