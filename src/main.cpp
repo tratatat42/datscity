@@ -774,8 +774,8 @@ int main(int argc, char** argv) {
 
             WeightedConnect best_connected;
             bool found_connected = false;
-            // bool with_connected = tower.words.size();
-            bool with_connected = true;
+            // bool with_connected = tower.words.size(); // two legs
+            bool with_connected = true;  // one leg
 
             vector<StatePtr> stage_states[N_STAGES];
             vector<int> stage_opt(N_STAGES, INF);
